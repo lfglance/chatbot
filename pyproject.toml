@@ -1,12 +1,13 @@
 [project]
 name = "jarvis"
 version = "0.1.0"
-description = "Add your description here"
+description = "Helpful voice bot"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.2.4",
     "pyaudio>=0.2.14",
+    "pyttsx3>=2.98",
     "requests>=2.32.3",
     "thefuzz>=0.22.1",
     "vosk>=0.3.45",

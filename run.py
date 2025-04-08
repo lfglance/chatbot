@@ -5,23 +5,25 @@ import pyaudio
 import requests
 import subprocess
 import numpy as np
+import pyttsx3 as tts
 from thefuzz import fuzz
 from vosk import Model, KaldiRecognizer
 
 
 # Audio settings
-CHUNK = 512
+CHUNK = 2048
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
-AMP_THRESHOLD = 300
+AMP_THRESHOLD = 600
 
 # Ollama API settings
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL_NAME = "llama3.2:1b"
+BOT_NAME = "jimbo"
 
 # Conversation context
-SYSTEM_PROMPT = "Your name is Llama. You are a helpful assistant. Keep your responses very brief. Be as concise as possible. Only use as few words as necessary. Laconic."
+SYSTEM_PROMPT = f"Your name is {BOT_NAME}. You are a helpful assistant. Keep your responses very brief. Be as concise as possible. Only use as few words as necessary. Laconic."
 
 # Load Vosk model
 model = Model("model/vosk-model-small-en-us-0.15")
@@ -49,6 +51,22 @@ def find_artist(query) -> str|bool:
         return top[0]
     else:
         return None
+
+def find_any(query) -> str|bool:
+    top = ("", 0)
+    result = subprocess.run(
+        ["mpc", "list", "title"],
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    tracks = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    print(tracks)
+    for track in tracks:
+        score = fuzz.ratio(query.lower(), track.lower())
+        if score > top[1]:
+            top = (track, score)
+    return top[0]
 
 def find_song(artist, query) -> str|bool:
     top = ("", 0)
@@ -82,22 +100,22 @@ def query_ollama(user_prompt):
         response = requests.post(OLLAMA_URL, json=payload)
         response.raise_for_status()
         result = response.json()
-        ollama_response = result.get("response", "No response from Ollama")
-        conversation_history.append({"role": "assistant", "content": ollama_response})
-        return ollama_response
+        ollama_response = result.get("message", "No response from Ollama")
+        return ollama_response["content"]
     except requests.RequestException as e:
         return f"Error querying Ollama: {e}"
+    except Exception as e:
+        return e
 
 print("Listening... (Ctrl+C to stop)\n")
-
 
 try:
     pending_text = None
     while True:
         data = stream.read(CHUNK, exception_on_overflow=False)
-        audio_data = np.frombuffer(data, dtype=np.int16)
-        amp = np.max(np.abs(audio_data))
-        if rec.AcceptWaveform(data) and amp > AMP_THRESHOLD:
+        # audio_data = np.frombuffer(data, dtype=np.int16)
+        # amp = np.max(np.abs(audio_data))
+        if rec.AcceptWaveform(data):
             result = json.loads(rec.Result())
             transcribed_text = result.get("text")
             if transcribed_text:
@@ -110,6 +128,10 @@ try:
                 if pending_text == "clear":
                     conversation_history = []
                     print("\n----- cleared session context -----\n")
+                elif pending_text == "volume up":
+                    subprocess.run(["mpc", "volume", "100"])
+                elif pending_text == "volume down":
+                    subprocess.run(["mpc", "volume", "60"])
                 elif pending_text == "stop":
                     subprocess.run(["mpc", "stop"])
                 elif pending_text == "pause":
@@ -125,23 +147,30 @@ try:
                     subprocess.run(["mpc", "next"])
                 elif pending_text == "rewind" or pending_text == "go back":
                     subprocess.run(["mpc", "prev"])
-                elif parts[0] == "play":
+                elif parts[0].startswith("play"):
                     subquery = " ".join(parts[1:]).split(" by ")
-                    title = subquery[0]
-                    artist = find_artist(subquery[1])
-                    res = find_song(artist, title)
-                    subprocess.run(["mpc", "clear"])
-                    subprocess.run(["mpc", "findadd", "artist", artist, "title", res])
-                    subprocess.run(["mpc", "play"])
+                    if len(subquery) > 1:
+                        title = subquery[0]
+                        artist = find_artist(subquery[1])
+                        res = find_song(artist, title)
+                        subprocess.run(["mpc", "clear"])
+                        subprocess.run(["mpc", "findadd", "artist", artist, "title", res])
+                        subprocess.run(["mpc", "play"])
+                    else:
+                        res = find_any(" ".join(parts[1:]))
+                        subprocess.run(["mpc", "clear"])
+                        subprocess.run(["mpc", "findadd", "title", res])
+                        subprocess.run(["mpc", "play"])
                 elif parts[0] == "shuffle":
                     split = " ".join(parts[1:]).split(" by ")
                     artist = find_artist(" ".join(split[1:]))
                     subprocess.run(["mpc", "clear"])
                     subprocess.run(["mpc", "findadd", "artist", artist])
                     subprocess.run(["mpc", "play"])
-                elif parts[0] == "lama":
+                elif parts[0] == BOT_NAME:
                     ollama_response = query_ollama(pending_text)
-                    print("\n" + ollama_response + "\n")
+                    print("\n" + ollama_response)
+                print()
             except Exception as e:
                 print(e)
                 pass
